@@ -148,6 +148,9 @@ function gameMatchesKeywords(
 
 // ── Main export ───────────────────────────────────────────────────────────────
 export async function getGamesByGenres(genres: string[]): Promise<SteamSpyGame[]> {
+  const t0 = Date.now();
+  console.log(`[SteamSpy] ▶ getGamesByGenres START — genres: ${genres.join(', ')}`);
+
   const client = await getMongoClientPromise();
   const db = client.db('bearing');
   const cacheCol = db.collection<CachedGenreData>('steamspy_genre_cache');
@@ -192,6 +195,8 @@ export async function getGamesByGenres(genres: string[]): Promise<SteamSpyGame[]
     }
   }
 
+  console.log(`[SteamSpy] ✓ Genre fetch done in ${Date.now() - t0}ms (${steamspyGenresToFetch.size} genres queried)`);
+
   // ── Step 3: Build candidate pool — union of all genre lists, de-dup by appid ──
   const candidateMap = new Map<number, SteamSpyGame>();
   for (const games of genreGameMap.values()) {
@@ -202,15 +207,19 @@ export async function getGamesByGenres(genres: string[]): Promise<SteamSpyGame[]
     }
   }
 
-  // ── Step 4: Sort candidates by positive reviews, take top 100 for tag enrichment ──
-  // (We only pass 30 to AI — enriching 100 gives ample filtered pool while staying within the 60s API timeout)
+  // ── Step 4: Sort candidates by positive reviews, take top 50 for tag enrichment ──
+  // (We pass top 30 to AI — 50 candidates give enough filtering headroom while
+  //  keeping cold-start tag-fetch time well under 15s)
   const topCandidates = Array.from(candidateMap.values())
     .filter((g) => g.name && g.positive > 100)
     .sort((a, b) => b.positive - a.positive)
-    .slice(0, 100);
+    .slice(0, 50);
+
+  console.log(`[SteamSpy] ✓ Candidate pool: ${topCandidates.length} games (${Date.now() - t0}ms elapsed)`);
 
   // ── Step 5: Enrich with tags (from cache or fresh appdetails) ─────────────
-  const ENRICH_CONCURRENCY = 5;
+  const tEnrich = Date.now();
+  const ENRICH_CONCURRENCY = 10;
   for (let i = 0; i < topCandidates.length; i += ENRICH_CONCURRENCY) {
     const batch = topCandidates.slice(i, i + ENRICH_CONCURRENCY);
     await Promise.all(
@@ -232,11 +241,12 @@ export async function getGamesByGenres(genres: string[]): Promise<SteamSpyGame[]
         }
       })
     );
-    // Polite delay between batches
+    // Short polite delay between batches
     if (i + ENRICH_CONCURRENCY < topCandidates.length) {
-      await new Promise((r) => setTimeout(r, 150));
+      await new Promise((r) => setTimeout(r, 50));
     }
   }
+  console.log(`[SteamSpy] ✓ Tag enrichment done in ${Date.now() - tEnrich}ms (${topCandidates.length} games)`);
 
   // ── Step 6: Score & filter by tag relevance ────────────────────────────────
   // A game gets +1 point for each selected genre it matches.
@@ -284,12 +294,14 @@ export async function getGamesByGenres(genres: string[]): Promise<SteamSpyGame[]
     );
   } else {
     console.log(
-      `[SteamSpy] ${tagMatched.length} tag-matched games (out of ${topCandidates.length} candidates) for genres: ${genres.join(', ')}`
+      `[SteamSpy] ✓ ${tagMatched.length} tag-matched games (out of ${topCandidates.length} candidates) for genres: ${genres.join(', ')}`
     );
   }
 
   // Return top 150 for AI context
-  return result.slice(0, 150);
+  const finalResult = result.slice(0, 150);
+  console.log(`[SteamSpy] ▶ getGamesByGenres DONE — ${finalResult.length} games returned in ${Date.now() - t0}ms total`);
+  return finalResult;
 
 }
 

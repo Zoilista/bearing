@@ -1,6 +1,10 @@
-import { MongoClient } from 'mongodb';
+import { MongoClient, type MongoClientOptions } from 'mongodb';
 
-const options = {};
+const options: MongoClientOptions = {
+  serverSelectionTimeoutMS: 5_000,  // fail fast if no server reachable
+  connectTimeoutMS: 5_000,          // TCP connect deadline
+  socketTimeoutMS: 10_000,          // per-operation socket deadline
+};
 
 declare global {
   // Allow global `_mongoClientPromise` in dev to survive HMR

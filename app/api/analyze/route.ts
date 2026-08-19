@@ -8,6 +8,9 @@ import type { AnalyzeFormData, AnalysisResponse } from '@/types';
 export const runtime = 'nodejs';
 export const maxDuration = 60; // seconds
 
+/** Elapsed ms since `start`, formatted as "Xs" */
+function elapsed(start: number) { return `${((Date.now() - start) / 1000).toFixed(1)}s`; }
+
 function getClientIp(req: NextRequest): string {
   return (
     req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ??
@@ -41,7 +44,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
-  const { genres, mechanics, story, platform } = body;
+  const { genres, mechanics, story } = body;
+  const platform = 'steam';
 
   if (!genres || genres.length === 0) {
     return NextResponse.json({ error: 'At least one genre is required' }, { status: 400 });
@@ -52,13 +56,14 @@ export async function POST(req: NextRequest) {
       { status: 400 }
     );
   }
-  if (!platform) {
-    return NextResponse.json({ error: 'Target platform is required' }, { status: 400 });
-  }
 
   try {
+    const tStart = Date.now();
+
     // Step 1: Fetch real games from SteamSpy (with MongoDB cache)
+    console.log(`[analyze] Step 1: SteamSpy fetch START`);
     const steamSpyGames = await getGamesByGenres(genres);
+    console.log(`[analyze] Step 1: SteamSpy fetch DONE — ${steamSpyGames.length} games (${elapsed(tStart)})`);
 
     if (steamSpyGames.length === 0) {
       return NextResponse.json(
@@ -67,14 +72,17 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Step 2: Fetch Steam descriptions for the top 30 games (to keep AI context manageable)
+    // Step 2: Fetch Steam US descriptions for top 30 games only (AI context)
+    // TR prices are NOT fetched here — only for the final AI-selected games later.
     const top30 = steamSpyGames.slice(0, 30);
     const appIds = top30.map((g) => g.appid);
-    const steamDetails = await getAppDetails(appIds);
+    console.log(`[analyze] Step 2: Steam US description fetch START (${appIds.length} games)`);
+    const steamDetailsUS = await getAppDetails(appIds, ['us']);
+    console.log(`[analyze] Step 2: Steam US description fetch DONE (${elapsed(tStart)})`);
 
     // Step 3: Build enriched game list for AI
     const analysisGames: AnalysisGame[] = top30.map((g) => {
-      const details = steamDetails.get(g.appid);
+      const details = steamDetailsUS.get(g.appid);
       return {
         appid: g.appid,
         name: g.name,
@@ -90,40 +98,47 @@ export async function POST(req: NextRequest) {
     });
 
     // Build a lookup map: appid → real SteamSpy review counts
-    // Used to override AI output (AI tends to echo 0 for numeric fields)
     const reviewLookup = new Map<number, { positive: number; negative: number }>();
     for (const g of steamSpyGames) {
       reviewLookup.set(g.appid, { positive: g.positive, negative: g.negative });
     }
 
     // Step 4: AI analysis — AI only sees the real game list
+    console.log(`[analyze] Step 4: AI analysis START (${elapsed(tStart)})`);
     const aiResult = await analyzeIdea(genres, mechanics, story, platform, analysisGames);
+    console.log(`[analyze] Step 4: AI analysis DONE (${elapsed(tStart)})`);
 
     // Step 5: Patch AI output — inject real review counts from SteamSpy source
-    // (prevents AI from returning positive:0 / negative:0)
     for (const game of aiResult.comparableGames) {
       const real = reviewLookup.get(game.appid);
       if (real) {
         game.positive = real.positive;
         game.negative = real.negative;
-        // Recompute reviewScore from real numbers
         const total = real.positive + real.negative;
         if (total > 0) {
           game.reviewScore = Math.round((real.positive / total) * 100);
         }
       }
-
-      // Inject live regional prices from Steam cache
-      const details = steamDetails.get(game.appid);
-      if (details) {
-        game.price = {
-          us: details.us?.price_overview,
-          tr: details.tr?.price_overview,
-        };
-      }
     }
 
-    // Step 6: Compose response
+    // Step 6: Fetch TR prices ONLY for the final AI-selected games (≤8 games × 1 region)
+    // This is the key optimisation: we no longer fetch TR prices for all 30 candidates.
+    const finalAppIds = aiResult.comparableGames.map((g) => g.appid);
+    console.log(`[analyze] Step 6: TR price fetch START (${finalAppIds.length} final games, ${elapsed(tStart)})`);
+    const steamDetailsTR = await getAppDetails(finalAppIds, ['tr']);
+    console.log(`[analyze] Step 6: TR price fetch DONE (${elapsed(tStart)})`);
+
+    // Inject regional prices — US from phase-2 cache, TR from phase-6
+    for (const game of aiResult.comparableGames) {
+      const usDetails = steamDetailsUS.get(game.appid);
+      const trDetails = steamDetailsTR.get(game.appid);
+      game.price = {
+        us: usDetails?.us?.price_overview,
+        tr: trDetails?.tr?.price_overview,
+      };
+    }
+
+    // Step 7: Compose response
     const response: AnalysisResponse = {
       ...aiResult,
       meta: {

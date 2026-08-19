@@ -40,7 +40,8 @@ const STEAM_DETAIL_CACHE: Map<string, { data: SteamAppDetails; ts: number }> = n
 const STEAM_CACHE_TTL = 24 * 60 * 60 * 1000; // 24h — descriptions rarely change
 
 export async function getAppDetails(
-  appIds: number[]
+  appIds: number[],
+  regions: ('us' | 'tr')[] = ['us', 'tr']
 ): Promise<Map<number, RegionalAppDetails>> {
   const result = new Map<number, RegionalAppDetails>();
   const toFetch: { appid: number; cc: 'us' | 'tr' }[] = [];
@@ -49,8 +50,8 @@ export async function getAppDetails(
   const now = Date.now();
   for (const id of appIds) {
     result.set(id, {});
-    
-    for (const cc of ['us', 'tr'] as const) {
+
+    for (const cc of regions) {
       const cacheKey = `${id}_${cc}`;
       const cached = STEAM_DETAIL_CACHE.get(cacheKey);
       if (cached && now - cached.ts < STEAM_CACHE_TTL) {
