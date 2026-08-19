@@ -1,0 +1,383 @@
+@import "tailwindcss";
+
+/* ─── Brand tokens ─────────────────────────────────────── */
+:root {
+  --ink:       #1A2F3A;
+  --paper:     #E8E4D9;
+  --secondary: #4A6B7C;
+  --accent:    #C4A77D;
+  --paper-dim: #D8D3C6;
+
+  --font-heading: var(--font-inter-tight), 'Inter Tight', sans-serif;
+  --font-body:    var(--font-source-sans), 'Source Sans 3', sans-serif;
+}
+
+/* ─── Base ──────────────────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-body);
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-heading);
+  line-height: 1.2;
+  color: var(--ink);
+}
+
+/* ─── Utilities ─────────────────────────────────────────── */
+.font-heading  { font-family: var(--font-heading); }
+.color-ink     { color: var(--ink); }
+.color-accent  { color: var(--accent); }
+.color-secondary { color: var(--secondary); }
+.bg-paper      { background: var(--paper); }
+.bg-ink        { background: var(--ink); }
+
+/* ─── Compass line decoration ───────────────────────────── */
+.compass-line {
+  width: 40px;
+  height: 2px;
+  background: var(--accent);
+  display: inline-block;
+  vertical-align: middle;
+  margin-right: 12px;
+  border-radius: 1px;
+}
+
+/* ─── Button variants ───────────────────────────────────── */
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 32px;
+  background: var(--ink);
+  color: var(--paper);
+  font-family: var(--font-heading);
+  font-size: 1rem;
+  font-weight: 600;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  text-decoration: none;
+  box-shadow: 0 2px 8px rgba(26, 47, 58, 0.1);
+}
+
+.btn-primary:hover {
+  background: #253F4C;
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(26, 47, 58, 0.3);
+}
+
+.btn-primary:active {
+  transform: translateY(0);
+  box-shadow: 0 4px 12px rgba(26, 47, 58, 0.2);
+}
+
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 28px;
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--font-heading);
+  font-size: 0.95rem;
+  font-weight: 600;
+  border: 2px solid var(--ink);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  text-decoration: none;
+}
+
+.btn-secondary:hover {
+  background: var(--ink);
+  color: var(--paper);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(26, 47, 58, 0.15);
+}
+
+/* ─── Card ──────────────────────────────────────────────── */
+.card {
+  background: #fff;
+  border: 1px solid var(--paper-dim);
+  border-radius: 8px;
+  padding: 24px;
+  transition: box-shadow 0.2s ease;
+}
+
+.card:hover {
+  box-shadow: 0 4px 16px rgba(26, 47, 58, 0.08);
+}
+
+/* ─── Form elements ─────────────────────────────────────── */
+.form-label {
+  display: block;
+  font-family: var(--font-heading);
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--ink);
+  margin-bottom: 6px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.form-hint {
+  font-size: 0.8rem;
+  color: var(--secondary);
+  margin-bottom: 8px;
+}
+
+.form-input,
+.form-textarea {
+  width: 100%;
+  padding: 12px 16px;
+  background: var(--paper);
+  border: 1.5px solid var(--paper-dim);
+  border-radius: 4px;
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 1rem;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  outline: none;
+}
+
+.form-input:focus,
+.form-textarea:focus {
+  border-color: var(--secondary);
+  box-shadow: 0 0 0 3px rgba(74, 107, 124, 0.12);
+}
+
+.form-textarea {
+  resize: vertical;
+  min-height: 100px;
+}
+
+/* ─── Genre chip multi-select ───────────────────────────── */
+.genre-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.genre-chip {
+  padding: 8px 16px;
+  border: 1.5px solid var(--paper-dim);
+  border-radius: 100px;
+  background: var(--paper);
+  color: var(--secondary);
+  font-family: var(--font-heading);
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.genre-chip:hover {
+  border-color: var(--secondary);
+  color: var(--ink);
+}
+
+.genre-chip.selected {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--paper);
+}
+
+.genre-chip.selected:hover {
+  background: var(--secondary);
+  border-color: var(--secondary);
+}
+
+/* ─── Loading / spinner ─────────────────────────────────── */
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.spinner {
+  width: 20px;
+  height: 20px;
+  border: 2.5px solid rgba(232, 228, 217, 0.3);
+  border-top-color: var(--paper);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+/* ─── Compass SVG animation ─────────────────────────────── */
+@keyframes compassSpin {
+  0%   { transform: rotate(0deg); }
+  25%  { transform: rotate(22deg); }
+  75%  { transform: rotate(-22deg); }
+  100% { transform: rotate(0deg); }
+}
+
+.compass-needle {
+  animation: compassSpin 3s ease-in-out infinite;
+  transform-origin: center;
+}
+
+/* ─── Hero section ──────────────────────────────────────── */
+.hero-section {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 80px 48px;
+  position: relative;
+  overflow: hidden;
+}
+
+@media (max-width: 768px) {
+  .hero-section { padding: 60px 24px; }
+}
+
+.hero-grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(26,47,58,0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(26,47,58,0.04) 1px, transparent 1px);
+  background-size: 48px 48px;
+  pointer-events: none;
+}
+
+/* ─── Report sections ───────────────────────────────────── */
+.content-section {
+  padding: 56px 48px 64px;
+}
+
+@media (max-width: 768px) {
+  .content-section {
+    padding: 32px 24px 40px;
+  }
+}
+
+.report-section-title {
+  font-family: var(--font-heading);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--secondary);
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ─── Layout ────────────────────────────────────────────── */
+.page-nav {
+  padding: 20px 48px;
+}
+.page-footer {
+  padding: 24px 48px;
+}
+.how-section {
+  padding: 80px 48px;
+}
+
+@media (max-width: 768px) {
+  .page-nav {
+    padding: 16px 24px;
+  }
+  .page-footer {
+    padding: 24px 24px;
+  }
+  .how-section {
+    padding: 48px 24px;
+  }
+}
+
+.report-section-title::before {
+  content: '';
+  display: inline-block;
+  width: 24px;
+  height: 1.5px;
+  background: var(--accent);
+  border-radius: 1px;
+}
+
+/* ─── Badge ─────────────────────────────────────────────── */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 100px;
+  font-size: 0.75rem;
+  font-family: var(--font-heading);
+  font-weight: 600;
+}
+
+.badge-warning {
+  background: rgba(196, 167, 125, 0.18);
+  color: #8B6914;
+  border: 1px solid rgba(196, 167, 125, 0.4);
+}
+
+.badge-positive {
+  background: rgba(74, 107, 124, 0.12);
+  color: var(--secondary);
+  border: 1px solid rgba(74, 107, 124, 0.25);
+}
+
+/* ─── Progress bar (review score) ──────────────────────── */
+.score-bar-track {
+  height: 6px;
+  background: var(--paper-dim);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.score-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+  transition: width 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* ─── Divider ───────────────────────────────────────────── */
+.divider {
+  border: none;
+  border-top: 1px solid var(--paper-dim);
+  margin: 24px 0;
+}
+
+/* ─── Disclaimer box ────────────────────────────────────── */
+.disclaimer-box {
+  border: 1px solid var(--paper-dim);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 4px 4px 0;
+  padding: 16px 20px;
+  background: rgba(232, 228, 217, 0.4);
+  font-size: 0.85rem;
+  color: var(--secondary);
+  line-height: 1.6;
+}
+
+/* ─── Scroll fade-in ────────────────────────────────────── */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(24px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.fade-up {
+  animation: fadeUp 0.5s ease forwards;
+}
+
+.fade-up-delay-1 { animation-delay: 0.1s; opacity: 0; }
+.fade-up-delay-2 { animation-delay: 0.2s; opacity: 0; }
+.fade-up-delay-3 { animation-delay: 0.3s; opacity: 0; }
