@@ -72,7 +72,8 @@ export interface CachedGenreData {
   lastFetched: Date;
 }
 
-const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+const CACHE_TTL_MS = 6 * 60 * 60 * 1000;         // 6 hours — genre game list
+const TAG_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days  — per-game tags (tags rarely change)
 
 // ── Fetch all games for a SteamSpy genre ──────────────────────────────────────
 async function fetchGenreFromSteamSpy(genre: string): Promise<SteamSpyGame[]> {
@@ -226,7 +227,7 @@ export async function getGamesByGenres(genres: string[]): Promise<SteamSpyGame[]
       batch.map(async (game) => {
         // Check tag cache first
         const cachedTags = await tagCacheCol.findOne({ appid: game.appid });
-        if (cachedTags && now.getTime() - cachedTags.lastFetched.getTime() < CACHE_TTL_MS * 4) {
+        if (cachedTags && now.getTime() - cachedTags.lastFetched.getTime() < TAG_CACHE_TTL_MS) {
           game.tags = cachedTags.tags;
         } else {
           const tags = await fetchAppDetailsTags(game.appid);
@@ -342,3 +343,96 @@ export function estimateRevenue(
 }
 
 export const AVAILABLE_GENRES = Object.keys(GENRE_TO_STEAMSPY_GENRE);
+
+/**
+ * All distinct SteamSpy genre strings that any user-selectable genre maps to.
+ * Used by warm-cache to pre-warm every leaf node independently.
+ */
+export const ALL_STEAMSPY_GENRES = [
+  ...new Set(Object.values(GENRE_TO_STEAMSPY_GENRE).flat()),
+] as const;
+
+/**
+ * Warm a single raw SteamSpy genre (e.g. "Strategy", "Indie", "RPG"):
+ * fetches or refreshes the game list AND enriches the top-50 tags.
+ * Called by /api/warm-cache to pre-warm leaf nodes without requiring
+ * a user-facing genre combination.
+ *
+ * Returns the number of games that ended up in the candidate pool.
+ */
+export async function warmSingleSteamSpyGenre(ssGenre: string): Promise<number> {
+  const t0 = Date.now();
+  console.log(`[warm] ▶ Warming SteamSpy genre: "${ssGenre}"`);
+
+  const client = await getMongoClientPromise();
+  const db = client.db('bearing');
+  const cacheCol = db.collection<CachedGenreData>('steamspy_genre_cache');
+  const tagCacheCol = db.collection<{ appid: number; tags: Record<string, number>; lastFetched: Date }>('steamspy_tag_cache');
+  const now = new Date();
+
+  // 1. Fetch / refresh game list for this SteamSpy genre
+  const cached = await cacheCol.findOne({ genre: ssGenre });
+  let games: SteamSpyGame[];
+
+  if (cached && now.getTime() - cached.lastFetched.getTime() < CACHE_TTL_MS) {
+    games = cached.games;
+    console.log(`[warm] "${ssGenre}" game list already fresh (${games.length} games, ${Date.now() - t0}ms)`);
+  } else {
+    const fresh = await fetchGenreFromSteamSpy(ssGenre);
+    if (fresh.length === 0) {
+      console.warn(`[warm] "${ssGenre}" returned 0 games from SteamSpy — skipping tag enrichment`);
+      return 0;
+    }
+    games = fresh
+      .filter((g) => g.positive > 0)
+      .sort((a, b) => b.positive - a.positive)
+      .slice(0, 500);
+    await cacheCol.updateOne(
+      { genre: ssGenre },
+      { $set: { genre: ssGenre, games, lastFetched: now } },
+      { upsert: true }
+    );
+    console.log(`[warm] "${ssGenre}" game list refreshed: ${games.length} games saved (${Date.now() - t0}ms)`);
+  }
+
+  // 2. Enrich top-50 tags so future queries skip the SteamSpy appdetails calls
+  const top50 = games
+    .filter((g) => g.name && g.positive > 100)
+    .sort((a, b) => b.positive - a.positive)
+    .slice(0, 50);
+
+  const ENRICH_CONCURRENCY = 10;
+  let tagsFetched = 0;
+  let tagsCached = 0;
+
+  for (let i = 0; i < top50.length; i += ENRICH_CONCURRENCY) {
+    const batch = top50.slice(i, i + ENRICH_CONCURRENCY);
+    await Promise.all(
+      batch.map(async (game) => {
+        const cachedTags = await tagCacheCol.findOne({ appid: game.appid });
+        if (cachedTags && now.getTime() - cachedTags.lastFetched.getTime() < TAG_CACHE_TTL_MS) {
+          tagsCached++;
+          return; // already warm — skip
+        }
+        const tags = await fetchAppDetailsTags(game.appid);
+        if (Object.keys(tags).length > 0) {
+          await tagCacheCol.updateOne(
+            { appid: game.appid },
+            { $set: { appid: game.appid, tags, lastFetched: now } },
+            { upsert: true }
+          );
+          tagsFetched++;
+        }
+      })
+    );
+    if (i + ENRICH_CONCURRENCY < top50.length) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  }
+
+  console.log(
+    `[warm] ✓ "${ssGenre}" done in ${Date.now() - t0}ms — ` +
+    `${tagsCached} tags already cached, ${tagsFetched} tags freshly fetched`
+  );
+  return top50.length;
+}
