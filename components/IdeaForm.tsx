@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import { GENRES, PLATFORMS } from '@/types';
+import { GENRES } from '@/types';
 import type { AnalyzeFormData } from '@/types';
 
 interface IdeaFormProps {
@@ -13,7 +13,7 @@ export default function IdeaForm({ onSubmit, isLoading }: IdeaFormProps) {
   const [selectedGenres, setSelectedGenres] = useState<string[]>([]);
   const [mechanics, setMechanics] = useState('');
   const [story, setStory] = useState('');
-  const [platform, setPlatform] = useState('steam');
+
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   const toggleGenre = useCallback((value: string) => {
@@ -34,7 +34,7 @@ export default function IdeaForm({ onSubmit, isLoading }: IdeaFormProps) {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!validate()) return;
-    onSubmit({ genres: selectedGenres, mechanics: mechanics.trim(), story: story.trim() || undefined, platform });
+    onSubmit({ genres: selectedGenres, mechanics: mechanics.trim(), story: story.trim() || undefined, platform: 'steam' });
   };
 
   return (
@@ -117,22 +117,26 @@ export default function IdeaForm({ onSubmit, isLoading }: IdeaFormProps) {
         />
       </div>
 
-      {/* ── Target platform ── */}
+      {/* ── Target platform (static) ── */}
       <div style={{ marginBottom: '40px' }}>
-        <label htmlFor="platform" className="form-label">Target platform</label>
-        <select
-          id="platform"
-          className="form-input"
-          value={platform}
-          onChange={(e) => setPlatform(e.target.value)}
-          style={{ cursor: 'pointer' }}
-        >
-          {PLATFORMS.map((p) => (
-            <option key={p.value} value={p.value}>
-              {p.label}
-            </option>
-          ))}
-        </select>
+        <span className="form-label" style={{ display: 'block' }}>Target platform</span>
+        <p className="form-hint" style={{ marginTop: '4px', marginBottom: 0 }}>
+          <span
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              fontWeight: 500,
+              color: 'var(--foreground)',
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z"/>
+            </svg>
+            Steam (PC)
+          </span>
+          {' '}— analysis is powered by SteamSpy &amp; Steam Web API data only.
+        </p>
       </div>
 
       {/* ── Submit ── */}
