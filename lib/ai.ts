@@ -6,13 +6,13 @@ import { z } from 'zod';
 // Groq primary — openai/gpt-oss-120b
 const GROQ_MODEL = process.env.GROQ_MODEL ?? 'openai/gpt-oss-120b';
 
-// OpenRouter fallback — google/gemma-4-26b-a4b-it:free
-// ✅ Verified free ($0/token) on 2026-08-17 via /api/v1/models.
-// ✅ Supports response_format: { type: 'json_object' } and actually returns valid JSON.
-// ✅ 262K context window, ample for our ~3K-token prompts.
-// Previous models returned HTTP 404 (unavailable for free), empty content, or 429 rate limit upstream.
+// OpenRouter fallback — openai/gpt-oss-120b:free
+// Switched 2026-08-20: same model family as Groq primary => consistent JSON schema compliance.
+// Free tier on OpenRouter, 131K context window, supports response_format json_object.
+// Previous model (google/gemma-4-26b-a4b-it:free) dropped due to repeated
+// "temporarily rate-limited upstream" errors from shared Google AI Studio free pool.
 const OPENROUTER_MODEL =
-  process.env.OPENROUTER_MODEL ?? 'google/gemma-4-26b-a4b-it:free';
+  process.env.OPENROUTER_MODEL ?? 'openai/gpt-oss-120b:free';
 
 const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 
@@ -118,19 +118,27 @@ export interface AnalysisGame {
 }
 
 // ─── Prompt builders ──────────────────────────────────────────────────────────
-// Keep per-game context COMPACT to stay within Groq's 8K TPM limit.
-// Each game entry is ~120 tokens. With 30 games, the game list ≈ 3,600 tokens.
-// The system prompt is ~650 tokens. User prompt header ~80 tokens.
-// Total input ≈ 4,300 tokens — well within 8K TPM.
-// Max output = 1,500 tokens (5-8 games × ~180 tokens + context ~300 tokens).
+// Token budget (Groq free tier: 6K TPM input):
+//   System prompt ≈  720 tokens
+//   Game list     ≈   30 games x ~55 tokens = ~1,650 tokens  (description removed)
+//   User prompt   ≈   80 tokens
+//   Total input   ≈ 2,450 tokens  — well within 6K TPM, halved vs. previous
+//   Max output    = 2,048 tokens  (8 games x ~200 + context/risks/opps ~450)
+// Removing the description field saves ~80 tokens/game (~2,400 total for 30 games),
+// freeing output budget so the full JSON response is never truncated at 1,500.
 
 function buildGameContext(games: AnalysisGame[]): string {
   return games
     .map((g) => {
       const total = g.positive + g.negative;
       const score = total > 0 ? Math.round((g.positive / total) * 100) : 0;
-      // Compact format: ~100 tokens per game
-      return `[${g.appid}] "${g.name}" by ${g.developer} | $${g.price_usd.toFixed(2)} | +${g.positive} -${g.negative} (${score}%) | Owners:${g.owners} | Tags:${g.tags.slice(0, 8).join(',')} | ${g.description.slice(0, 120).replace(/\n/g, ' ')}`;
+      // ~55 tokens/game: appid, name, dev, price, score%, owners, top tags.
+      // Description intentionally omitted — saves ~80 tok/game, tags already capture genre signal.
+      return (
+        `[${g.appid}] "${g.name}" by ${g.developer}` +
+        ` | $${g.price_usd.toFixed(2)} | score:${score}%` +
+        ` | ${g.owners} owners | Tags:${g.tags.slice(0, 8).join(',')}`
+      );
     })
     .join('\n');
 }
@@ -153,8 +161,9 @@ RULES:
 4. Skip games that don't match the genre, even if popular.
 5. Use hedged language: "based on this data", "one risk is", "in this context". No absolute predictions.
 6. Flag AA/AAA games with isBigBudget:true.
+7. reviewScore MUST be an integer between 0 and 100 — it is a percentage (e.g. 82 = 82% positive). NEVER return a raw review count or any number above 100.
 
-RESPOND WITH VALID JSON ONLY. No markdown, no preamble. Use this exact schema:
+RESPOND WITH VALID JSON ONLY. No markdown, no preamble. Output the COMPLETE JSON without truncation. Use this exact schema:
 {"comparableGames":[{"appid":number,"name":"string","developer":"string","publisher":"string","owners":"string","positive":number,"negative":number,"price_usd":number,"reviewScore":number,"isBigBudget":boolean,"relevanceReason":"1-2 sentences mentioning shared tags/mechanics","storyRelevance":"string or null"}],"marketContext":"3-4 sentence paragraph","riskFactors":["risk1","risk2","risk3"],"opportunities":["opp1","opp2","opp3"],"storyNarrative":"string or null","disclaimer":"This analysis is based on data from SteamSpy and Steam Web API. All ownership and revenue figures are estimates with significant uncertainty. Bearing does not guarantee any commercial outcome."}`;
 
   const userPrompt = `GAMES (use ONLY these):
@@ -271,7 +280,7 @@ async function callOpenRouter(
           { role: 'user', content: userPrompt },
         ],
         temperature: 0.3,
-        max_tokens: 1500,
+        max_tokens: 2048, // raised from 1500: 8 games x ~200 tok + context/risks/opps ~450 = ~2,050
         response_format: { type: 'json_object' },
       }),
     });
@@ -300,7 +309,8 @@ async function callOpenRouter(
  *  1. Groq (openai/gpt-oss-120b) — primary, up to GROQ_MAX_ATTEMPTS attempts.
  *     Retried on transient failures (json_validate_failed / empty content).
  *     Rate-limit (429) skips remaining Groq retries and falls through immediately.
- *  2. OpenRouter (gemma-4-26b-a4b-it:free) — single attempt fallback.
+ *  2. OpenRouter (openai/gpt-oss-120b:free) — single attempt fallback.
+ *     Same model family as Groq -> consistent schema behaviour.
  *     Not retried: each call takes 45-55 s; a second attempt risks the 120 s limit.
  *
  * Error types thrown:
@@ -331,7 +341,7 @@ export async function analyzeIdea(
             { role: 'user', content: userPrompt },
           ],
           temperature: 0.3,
-          max_tokens: 1500,
+          max_tokens: 2048, // raised from 1500: 8 games x ~200 tok + context/risks/opps ~450 = ~2,050
           response_format: { type: 'json_object' },
         });
 
