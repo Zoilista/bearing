@@ -211,6 +211,32 @@ function extractRetryAfter(err: unknown): number {
   return 15;
 }
 
+// ─── Retry config ────────────────────────────────────────────────────────────
+//
+// Groq:        max 2 attempts (1 initial + 1 retry), 1.5 s pause between them.
+//              json_validate_failed (400) is transient — a second call usually
+//              succeeds because the model's sampling is non-deterministic.
+//
+// OpenRouter:  deliberately 1 attempt only.
+//              Each call takes 45-55 s on the free tier; two attempts would
+//              consume ≥ 90-110 s, leaving < 10-30 s for SteamSpy + Steam API
+//              overhead and risking the 120 s maxDuration hard limit.
+//              Retry is not worth the reliability risk here.
+
+const GROQ_MAX_ATTEMPTS = 2;
+const GROQ_RETRY_DELAY_MS = 1500;
+
+/** Resolves after `ms` milliseconds. */
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** True when Groq rejects the call because the model produced invalid JSON (HTTP 400 json_validate_failed). */
+function isJsonValidateFailed(err: unknown): boolean {
+  if (err instanceof Error) {
+    return err.message.includes('json_validate_failed');
+  }
+  return false;
+}
+
 // ─── OpenRouter call ──────────────────────────────────────────────────────────
 
 async function callOpenRouter(
@@ -271,13 +297,15 @@ async function callOpenRouter(
  * Analyzes a game idea using real Steam data.
  *
  * Provider cascade:
- *  1. Groq  (openai/gpt-oss-120b)         — primary, fast, 8K TPM free tier
- *  2. OpenRouter (gemma-4-26b-a4b-it:free) — fallback for ALL Groq failures
- *     including 429 rate-limit (Groq RL ≠ OpenRouter RL, so fallback is worth it)
+ *  1. Groq (openai/gpt-oss-120b) — primary, up to GROQ_MAX_ATTEMPTS attempts.
+ *     Retried on transient failures (json_validate_failed / empty content).
+ *     Rate-limit (429) skips remaining Groq retries and falls through immediately.
+ *  2. OpenRouter (gemma-4-26b-a4b-it:free) — single attempt fallback.
+ *     Not retried: each call takes 45-55 s; a second attempt risks the 120 s limit.
  *
  * Error types thrown:
  *  - AIRateLimitError       — BOTH providers returned 429
- *  - AIInvalidResponseError — AI returned malformed JSON (both providers)
+ *  - AIInvalidResponseError — AI returned malformed JSON (both providers exhausted)
  *  - AIUnavailableError     — both providers failed for other reasons
  */
 export async function analyzeIdea(
@@ -289,44 +317,60 @@ export async function analyzeIdea(
 ): Promise<AnalysisResult> {
   const { systemPrompt, userPrompt } = buildPrompts(genres, mechanics, story, platform, games);
 
-  // ── 1. Try Groq ──────────────────────────────────────────────────────────
+  // ── 1. Try Groq (with retry) ──────────────────────────────────────────────
   let groqError: unknown = null;
 
   if (process.env.GROQ_API_KEY) {
-    try {
-      const response = await getGroqClient().chat.completions.create({
-        model: GROQ_MODEL,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
-        ],
-        temperature: 0.3,
-        max_tokens: 1500,
-        response_format: { type: 'json_object' },
-      });
+    for (let attempt = 1; attempt <= GROQ_MAX_ATTEMPTS; attempt++) {
+      try {
+        console.log(`[AI] Groq attempt ${attempt}/${GROQ_MAX_ATTEMPTS} | model: ${GROQ_MODEL}`);
+        const response = await getGroqClient().chat.completions.create({
+          model: GROQ_MODEL,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+          ],
+          temperature: 0.3,
+          max_tokens: 1500,
+          response_format: { type: 'json_object' },
+        });
 
-      const content = response.choices[0]?.message?.content;
-      if (!content) throw new Error('Groq returned empty content');
+        const content = response.choices[0]?.message?.content;
+        if (!content) throw new Error('Groq returned empty content');
 
-      const result = parseAndValidateAiJson(content);
-      console.log('[AI] provider used: groq | model:', GROQ_MODEL);
-      return result;
-    } catch (err) {
-      groqError = err;
-
-      // Log rate-limit clearly, but still fall through to OpenRouter.
-      // Groq and OpenRouter have independent rate-limit budgets, so the
-      // fallback is almost always available even when Groq is exhausted.
-      if (isRateLimit(err)) {
-        const retryAfter = extractRetryAfter(err);
-        console.warn(
-          `[AI] Groq rate limit hit (429). Retry in ${retryAfter}s. Falling back to OpenRouter.`
+        const result = parseAndValidateAiJson(content);
+        console.log(
+          `[AI] provider used: groq | model: ${GROQ_MODEL} | attempt: ${attempt}/${GROQ_MAX_ATTEMPTS}`
         );
-      } else {
-        console.warn(
-          '[AI] Groq failed — falling back to OpenRouter.',
-          err instanceof Error ? err.message : err
-        );
+        return result;
+      } catch (err) {
+        groqError = err;
+
+        // Rate-limit: independent from OpenRouter budget, fall through immediately.
+        if (isRateLimit(err)) {
+          const retryAfter = extractRetryAfter(err);
+          console.warn(
+            `[AI] Groq attempt ${attempt}/${GROQ_MAX_ATTEMPTS} — rate limit (429). ` +
+            `Retry in ${retryAfter}s. Skipping remaining Groq attempts, falling back to OpenRouter.`
+          );
+          break; // exit loop; go straight to OpenRouter
+        }
+
+        if (attempt < GROQ_MAX_ATTEMPTS) {
+          const reason = isJsonValidateFailed(err)
+            ? 'json_validate_failed'
+            : err instanceof Error ? err.message.slice(0, 100) : String(err);
+          console.warn(
+            `[AI] Groq attempt ${attempt}/${GROQ_MAX_ATTEMPTS} failed (${reason}). ` +
+            `Retrying in ${GROQ_RETRY_DELAY_MS}ms...`
+          );
+          await sleep(GROQ_RETRY_DELAY_MS);
+        } else {
+          console.warn(
+            `[AI] Groq failed after ${GROQ_MAX_ATTEMPTS} attempt(s) — falling back to OpenRouter.`,
+            err instanceof Error ? err.message : err
+          );
+        }
       }
     }
   } else {
@@ -334,10 +378,11 @@ export async function analyzeIdea(
     console.warn('[AI] GROQ_API_KEY not set — skipping Groq, trying OpenRouter directly.');
   }
 
-  // ── 2. Try OpenRouter ────────────────────────────────────────────────────
+  // ── 2. Try OpenRouter (1 attempt — see RETRY CONFIG note above) ──────────
   let openRouterError: unknown = null;
 
   try {
+    console.log(`[AI] OpenRouter attempt 1/1 | model: ${OPENROUTER_MODEL}`);
     const content = await callOpenRouter(systemPrompt, userPrompt);
     const result = parseAndValidateAiJson(content);
     console.log('[AI] provider used: openrouter | model:', OPENROUTER_MODEL);
