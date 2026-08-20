@@ -225,7 +225,8 @@ async function callOpenRouter(
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 55_000);
+  // 90s — stays within the 120s maxDuration with room for the rest of the pipeline
+  const timeout = setTimeout(() => controller.abort(), 90_000);
 
   try {
     const res = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
@@ -270,13 +271,14 @@ async function callOpenRouter(
  * Analyzes a game idea using real Steam data.
  *
  * Provider cascade:
- *  1. Groq  (openai/gpt-oss-120b)   — primary, fast, 8K TPM free tier
- *  2. OpenRouter (openai/gpt-oss-20b:free) — fallback, verified free 2026-08-17
+ *  1. Groq  (openai/gpt-oss-120b)         — primary, fast, 8K TPM free tier
+ *  2. OpenRouter (gemma-4-26b-a4b-it:free) — fallback for ALL Groq failures
+ *     including 429 rate-limit (Groq RL ≠ OpenRouter RL, so fallback is worth it)
  *
  * Error types thrown:
- *  - AIRateLimitError      — Groq 429, user should wait
+ *  - AIRateLimitError       — BOTH providers returned 429
  *  - AIInvalidResponseError — AI returned malformed JSON (both providers)
- *  - AIUnavailableError    — both providers failed for other reasons
+ *  - AIUnavailableError     — both providers failed for other reasons
  */
 export async function analyzeIdea(
   genres: string[],
@@ -312,18 +314,20 @@ export async function analyzeIdea(
     } catch (err) {
       groqError = err;
 
-      // Propagate rate-limit immediately — no point trying the fallback for 429
-      // (the fallback has its own separate rate limit)
+      // Log rate-limit clearly, but still fall through to OpenRouter.
+      // Groq and OpenRouter have independent rate-limit budgets, so the
+      // fallback is almost always available even when Groq is exhausted.
       if (isRateLimit(err)) {
         const retryAfter = extractRetryAfter(err);
-        console.warn(`[AI] Groq rate limit hit (429). Retry in ${retryAfter}s.`);
-        throw new AIRateLimitError(retryAfter);
+        console.warn(
+          `[AI] Groq rate limit hit (429). Retry in ${retryAfter}s. Falling back to OpenRouter.`
+        );
+      } else {
+        console.warn(
+          '[AI] Groq failed — falling back to OpenRouter.',
+          err instanceof Error ? err.message : err
+        );
       }
-
-      console.warn(
-        '[AI] Groq failed — falling back to OpenRouter.',
-        err instanceof Error ? err.message : err
-      );
     }
   } else {
     groqError = new Error('GROQ_API_KEY not set — skipping Groq');
@@ -347,5 +351,16 @@ export async function analyzeIdea(
   }
 
   // ── 3. Both failed ───────────────────────────────────────────────────────
+  // If BOTH providers hit a rate-limit, surface it as AIRateLimitError so
+  // the user sees a clear "wait N seconds" message instead of a generic 503.
+  if (isRateLimit(groqError) && isRateLimit(openRouterError)) {
+    const retryAfter = Math.max(
+      extractRetryAfter(groqError),
+      extractRetryAfter(openRouterError)
+    );
+    console.warn(`[AI] Both providers rate-limited. Suggest retry in ${retryAfter}s.`);
+    throw new AIRateLimitError(retryAfter);
+  }
+
   throw new AIUnavailableError(groqError, openRouterError);
 }

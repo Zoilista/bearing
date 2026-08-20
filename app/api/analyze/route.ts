@@ -6,7 +6,7 @@ import { checkRateLimit } from '@/lib/ratelimit';
 import type { AnalyzeFormData, AnalysisResponse } from '@/types';
 
 export const runtime = 'nodejs';
-export const maxDuration = 60; // seconds
+export const maxDuration = 120; // seconds — Vercel Hobby Fluid Compute allows up to 300s
 
 /** Elapsed ms since `start`, formatted as "Xs" */
 function elapsed(start: number) { return `${((Date.now() - start) / 1000).toFixed(1)}s`; }
